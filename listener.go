@@ -25,20 +25,45 @@ func (m Logout) String() string {
 
 type Done struct{}
 
-func service(c chan Message){
-	
-}
-
-func proxy(counter InFlightCounter, c chan Message) {
+func service(c,s chan Message) {
 	for {
-		var msg = <-c
+		var msg = <-s
 		switch msg.(type) {
 		case Login:
 			fmt.Println(msg)
 		case Logout:
 			fmt.Println("I'm outta here\n")
+		}
+		c <- Done{}
+	}
+}
+
+func proxy(counter InFlightCounter, c,s chan Message) {
+	for {
+		cq := counter.Queue
+		cc := &counter.Count
+		var msg = <-c
+		if msg == nil {
+			return
+		}
+		switch msg.(type) {
 		case Done:
-			counter.Count--
+			if counter.Queue.Len() > 0 {
+				e := cq.Back()
+				cq.Remove(e)
+				s <- e.Value
+			} else {
+				*cc--
+			}
+			fmt.Println("Done: count: ",*cc)
+		default:
+			if *cc > Max {
+				cq.PushFront(msg)
+			} else {
+				s <- msg
+				*cc++
+			}
+			fmt.Println("Message: count: ",*cc)
 		}
 	}
 }
@@ -52,10 +77,12 @@ type InFlightCounter struct {
 
 func main() {
 	c := make(chan Message)
-	go proxy(InFlightCounter{Queue: list.New()}, c)
+	s := make(chan Message)
+	go service(c,s)
+	go proxy(InFlightCounter{Queue: list.New()}, c, s)
 	for i := 0; i < 5; i++ {
 		c <- Login{Id: "Me", Password: "Foo"}
-		c <- Done{}
+		c <- Logout{}
 		c <- nil
 		time.Sleep(300 * time.Millisecond)
 	}
